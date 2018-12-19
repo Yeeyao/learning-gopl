@@ -24,6 +24,10 @@ func main() {
 	launch()
 }
 
+func walkDir(dir string, fileSizes chan<- int64) {
+
+}
+
 // import (
 // 	"fmt"
 // 	"time"
