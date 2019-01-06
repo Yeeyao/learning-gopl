@@ -1,32 +1,264 @@
 package main
 
 import (
+	"bufio"
+	"flag"
 	"fmt"
+	"log"
+	"net"
 	"time"
 )
 
 func main() {
-	// create abort channel
+	listener, err := net.Listen("tcp", "localhost: 8000")
+	if err != nil {
+		log.Fatal(err)
+	}
+	go broadcaster()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Print(err)
+			continue
+		}
+		go handleConn(conn)
+	}
+}
 
-	fmt.Println("Commencing countdown. press return to abort.")
-	tick := time.Tick(1 * time.Second)
-	for countdown := 10; countdonw > 0; countdown-- {
-		fmt.Println(coundown)
+type client chan<- string // an outgoing message channel
+
+var (
+	entering = make(chan client)
+	leaving  = make(chan client)
+	messages = make(chan string) // all incoming client messages
+)
+
+func broadcaster() {
+	clients := make(map[client]bool) // all connected clients
+	for {
 		select {
-		case <-tick:
-			// do nothing.
-
-		case <-abort:
-			fmt.Println("Launch aborted!")
-			return
+		case msg := <-messages:
+			// Broadcase incoming message to all
+			// clients' outgoing message channels.
+			for cli := range clients {
+				cli <- msg
+			}
+		case cli := <-entering:
+			clients[cli] = true
+		case cli := <-leaving:
+			delete(clients, cli)
+			close(cli)
 		}
 	}
-	launch()
 }
 
-func walkDir(dir string, fileSizes chan<- int64) {
+func handleConn(conn net.Conn) {
+	ch := make(chan string)
+	go clientWriter(conn, ch)
 
+	who := conn.RemoteAddr().String()
+	ch <- "You are " + who
+	messages <- who + " has arrived"
+	entering <- ch
+
+	input := bufio.NewScanner(conn)
+	for input.Scan() {
+		messages <- who + ": " + input.Text()
+	}
+	// NOTE: ignoreing potentian errors from input.Err()
+	leaving <- ch
+	messages <- who + " has left"
+	conn.Close()
 }
+
+func clientWriter(conn net.Connj, ch <-chan string) {
+	for msg := range ch {
+		fmt.Fprintln(conn, msg) // NOTE: ignoring network errors
+	}
+}
+
+// var done = make(chan struct{})
+
+// func cancelled() bool {
+// 	select {
+// 	case <-done:
+// 		return truen
+// 	default:
+// 		return false
+// 	}
+// }
+
+// // Cancel traversal when inpu is detected.
+// go func() {
+// 	os.Stdin.Read(make([]byte, 1))
+// 	close(done)
+// }()
+
+// import (
+// 	"os"
+// 	"path/filepath"
+// 	"sync"
+// )
+
+// func main() {
+// 	// ...determine roots...
+// 	// Traverse each root of the file tree in parallel.
+// 	fileSizes := make(chan int64)
+// 	var n sync.WaitGroup
+// 	for _, root := range roots {
+// 		n.Add(1)
+// 		go walkDir(root, &n, fileSizes)
+// 	}
+// 	go func() {
+// 		n.Wait()
+// 		close(fileSizes)
+// 	}()
+// 	// ...select loop...
+// }
+
+// func walkDir(dir string, n *sync.WaitGroup, fileSizes chan<- int64) {
+// 	defer n.Done()
+// 	for _, entry := range dirents(dir) {
+// 		if entry.IsDir() {
+// 			n.Add(1)
+// 			subdir := filepath.Join(dir, entry.Name())
+// 			go walkDir(subdir, n, fileSizes)
+// 		} else {
+// 			fileSizes <- entry.Size()
+// 		}
+// 	}
+// }
+
+// var sema = make(chan struct{}, 20)
+
+// func dirents(dir string) []os.FileInfo {
+// 	sema <- struct{}{}        // acquire token
+// 	defer func() { <-sema }() // release token
+// }
+
+// import (
+// 	"flag"
+// 	"time"
+// )
+
+var verbos = flag.Bool("v", false, "show verbos progress messages")
+
+func main() {
+	// ...start background goroutine...
+
+	// Print the results periodically.
+	var tick <-chan time.Time
+	if *verbos {
+		tick = time.Tick(500 * time.Millisecond)
+	}
+	var nfiles, nbytes int64
+loop:
+	for {
+		select {
+		case <-done:
+			// Drain fileSizes to allow existing goroutines to finish.
+			for range fileSizes {
+				// Do nothing
+			}
+			return
+		case size, ok := <-fileSizes:
+			if !ok {
+				break loop // fileSizes was closed
+			}
+			nfiles++
+			nbytes += size
+		case <-tick:
+			printDiskUsage(nfiles, nbytes)
+		}
+	}
+	printDiskUsage(nfiles, nbytes) // final totals
+}
+
+// import (
+// 	"flag"
+// 	"fmt"
+// 	"io/ioutil"
+// 	"os"
+// 	"path/filepath"
+// )
+
+// func main() {
+// 	// Determine the intial directories
+// 	flag.Parse()
+// 	roots := flag.Args()
+// 	if len(roots) == 0 {
+// 		roots = []string{"."}
+// 	}
+
+// 	// Traverse the file tree
+// 	fileSizes := make(chan int64)
+// 	go func() {
+// 		for _, root := range roots {
+// 			walkDir(root, fileSizes)
+// 		}
+// 		close(fileSizes)
+// 	}()
+
+// 	// Print the results.
+// 	var nfiles, nbytes int64
+// 	for size := range fileSizes {
+// 		nfiles++
+// 		nbytes += size
+// 	}
+// 	printDiskUsage(nfiles, nbytes)
+// }
+
+// func printDiskUsage(nfiles, nbytes int64) {
+// 	fmt.Printf("%d files %.1f GB\n", nfiles, float64(nbytes)/1e9)
+// }
+
+// func walkDir(dir string, fileSizes chan<- int64) {
+// 	for _, entry := range dirents(dir) {
+// 		if entry.IsDir() {
+// 			subdir := filepath.Join(dir, entry.Name())
+// 			walkDir(subdir, fileSizes)
+// 		} else {
+// 			fileSizes <- entry.Size()
+// 		}
+// 	}
+// }
+
+// // dirents returns the entries of directory dir.
+// func dirents(dir string) []os.FileInfo {
+// 	entries, err := ioutil.ReadDir(dir)
+// 	if err != nil {
+// 		fmt.Fprintf(os.Stderr, "du1: %v\n", err)
+// 		return nil
+// 	}
+// 	return entries
+// }
+
+// import (
+// 	"fmt"
+// 	"io/ioutil"
+// 	"os"
+// 	"path/filepath"
+// 	"time"
+// )
+
+// func main() {
+// 	// create abort channel
+
+// 	fmt.Println("Commencing countdown. press return to abort.")
+// 	tick := time.Tick(1 * time.Second)
+// 	for countdown := 10; countdonw > 0; countdown-- {
+// 		fmt.Println(coundown)
+// 		select {
+// 		case <-tick:
+// 			// do nothing.
+
+// 		case <-abort:
+// 			fmt.Println("Launch aborted!")
+// 			return
+// 		}
+// 	}
+// 	launch()
+// }
 
 // import (
 // 	"fmt"
